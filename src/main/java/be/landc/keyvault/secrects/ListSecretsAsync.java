@@ -1,4 +1,4 @@
-package be.landc.client;
+package be.landc.keyvault.secrects;
 
 import java.time.OffsetDateTime;
 

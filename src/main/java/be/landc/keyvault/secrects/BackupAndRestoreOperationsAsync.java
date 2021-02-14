@@ -1,4 +1,4 @@
-package be.landc.client;
+package be.landc.keyvault.secrects;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -7,21 +7,18 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.time.OffsetDateTime;
 
-import com.azure.core.util.polling.PollResponse;
-import com.azure.core.util.polling.SyncPoller;
 import com.azure.identity.DefaultAzureCredentialBuilder;
-import com.azure.security.keyvault.secrets.SecretClient;
+import com.azure.security.keyvault.secrets.SecretAsyncClient;
 import com.azure.security.keyvault.secrets.SecretClientBuilder;
-import com.azure.security.keyvault.secrets.models.DeletedSecret;
 import com.azure.security.keyvault.secrets.models.KeyVaultSecret;
 import com.azure.security.keyvault.secrets.models.SecretProperties;
 
 /**
- * Sample demonstrates how to backup and restore secrets in the key vault.
+ * Sample demonstrates how to asynchronously backup and restore secrets in the key vault.
  */
-public class BackupAndRestoreSecrets {
+public class BackupAndRestoreOperationsAsync {
     /**
-     * Authenticates with the key vault and shows how to backup and restore secrets in the key vault.
+     * Authenticates with the key vault and shows how to asynchronously backup and restore secrets in the key vault.
      *
      * @param args Unused. Arguments to the program.
      * @throws IllegalArgumentException when invalid key vault endpoint is passed.
@@ -30,53 +27,60 @@ public class BackupAndRestoreSecrets {
      */
     public static void main(String[] args) throws IOException, InterruptedException, IllegalArgumentException {
 
-        // Instantiate a client that will be used to call the service. Notice that the client is using default Azure
+        // Instantiate async secret client that will be used to call the service. Notice that the client is using default Azure
         // credentials. To make default credentials work, ensure that environment variables 'AZURE_CLIENT_ID',
         // 'AZURE_CLIENT_KEY' and 'AZURE_TENANT_ID' are set with the service principal credentials.
-        SecretClient client = new SecretClientBuilder()
+        SecretAsyncClient secretAsyncClient = new SecretClientBuilder()
             .vaultUrl("https://pramitkeyvault.vault.azure.net/")
             .credential(new DefaultAzureCredentialBuilder().build())
-            .buildClient();
+            .buildAsyncClient();
 
         // Let's create secrets holding storage account credentials valid for 1 year. if the secret
         // already exists in the key vault, then a new version of the secret is created.
-        client.setSecret(new KeyVaultSecret("StorageAccountPassword", "f4G34fMh8v-fdsgjsk2323=-asdsdfsdf")
+        secretAsyncClient.setSecret(new KeyVaultSecret("StorageAccountPassword", "f4G34fMh8v-fdsgjsk2323=-asdsdfsdf")
             .setProperties(new SecretProperties()
-                .setExpiresOn(OffsetDateTime.now().plusYears(1))));
+            .setExpiresOn(OffsetDateTime.now().plusYears(1))))
+            .subscribe(secretResponse ->
+                System.out.printf("Secret is created with name %s and value %s %n", secretResponse.getName(), secretResponse.getValue()));
+
+        Thread.sleep(2000);
 
         // Backups are good to have, if in case secrets get accidentally deleted by you.
         // For long term storage, it is ideal to write the backup to a file.
-        String backupFilePath = "secretbackup.txt";
-        byte[] secretBackup = client.backupSecret("StorageAccountPassword");
-        writeBackupToFile(secretBackup, backupFilePath);
+        String backupFilePath = "YOUR_BACKUP_FILE_PATH";
+        secretAsyncClient.backupSecret("StorageAccountPassword").subscribe(backupResponse -> {
+            byte[] backupBytes = backupResponse;
+            writeBackupToFile(backupBytes, backupFilePath);
+        });
+
+        Thread.sleep(7000);
 
         // The storage account secret is no longer in use, so you delete it.
-        SyncPoller<DeletedSecret, Void> deletedStorageSecretPoller
-                = client.beginDeleteSecret("StorageAccountPassword");
+        secretAsyncClient.beginDeleteSecret("StorageAccountPassword")
+            .subscribe(pollResponse -> {
+                System.out.println("Delete Status: " + pollResponse.getStatus().toString());
+                System.out.println("Deleted Secret Name: " + pollResponse.getValue().getName());
+                System.out.println("Deleted Secret Value: " + pollResponse.getValue().getValue());
+            });
 
-        PollResponse<DeletedSecret>  pollResponse = deletedStorageSecretPoller.poll();
-
-
-        DeletedSecret deletedStorageSecret = pollResponse.getValue();
-        System.out.println("Deleted Date %s" + deletedStorageSecret.getDeletedOn().toString());
-        System.out.printf("Deleted Secret's Recovery Id %s", deletedStorageSecret.getRecoveryId());
-
-        // Key is being deleted on server.
-        deletedStorageSecretPoller.waitForCompletion();
-
-
-        //To ensure secret is deleted on server side.
+        System.out.println("I will sleep");
+        //To ensure file is deleted on server side.
         Thread.sleep(30000);
 
         // If the vault is soft-delete enabled, then you need to purge the secret as well for permanent deletion.
-        client.purgeDeletedSecret("StorageAccountPassword");
+        secretAsyncClient.purgeDeletedSecretWithResponse("StorageAccountPassword").subscribe(purgeResponse ->
+            System.out.printf("Purge Status response %d %n", purgeResponse.getStatusCode()));
 
-        //To ensure secret is purged on server side.
+        //To ensure file is purged on server side.
         Thread.sleep(15000);
 
         // After sometime, the secret is required again. We can use the backup value to restore it in the key vault.
         byte[] backupFromFile = Files.readAllBytes(new File(backupFilePath).toPath());
-        KeyVaultSecret restoredSecret = client.restoreSecretBackup(backupFromFile);
+        secretAsyncClient.restoreSecretBackup(backupFromFile).subscribe(secretResponse ->
+            System.out.printf("Restored Secret with name %s %n", secretResponse.getName()));
+
+        //To ensure secret is restored on server side.
+        Thread.sleep(15000);
     }
 
     private static void writeBackupToFile(byte[] bytes, String filePath) {
